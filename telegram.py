@@ -1,21 +1,28 @@
+# -*- coding: utf-8 -*-
 import sqlite3
 import json
 import logging
 import os
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import (
     KeyboardButton, ReplyKeyboardMarkup, WebAppInfo,
-    LabeledPrice, PreCheckoutQuery, SuccessfulPayment
+    LabeledPrice, PreCheckoutQuery
 )
 from aiogram.filters.command import CommandObject
 from aiogram.fsm.storage.memory import MemoryStorage
 from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
 
-# === Configuration ===
-TOKEN = "7570091495:AAF4RaqPOYcLZiOE2wIvaUKJCUz588iAnm4"
+# === Load environment ===
+load_dotenv()
+
+TOKEN = os.getenv("TELEGRAM_USERBOT_TOKEN", "CHANGE_ME")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "WohnungsBot")
+HELP_USERNAME = os.getenv("HELP_USERNAME", "@WohnungsBotInfo")
+
 WEBAPP_URLS = {
     "en": "https://va3elina.github.io/WebApp/filtersEN.html",
     "de": "https://va3elina.github.io/WebApp/filtersDE.html",
