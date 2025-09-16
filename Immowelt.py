@@ -1,32 +1,36 @@
 # -*- coding: utf-8 -*-
 import requests
 import time
-import json
 import logging
 import sqlite3
+import os
 from datetime import datetime
-from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
+
+# === Загрузка .env ===
+load_dotenv()
 
 # === Настройка логирования ===
+LOG_FILE = os.getenv("LOG_FILE", "immowelt_scraper.log")
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("immowelt_scraper.log", encoding="utf-8"),
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
         logging.StreamHandler()
     ]
 )
 
 # === Константы ===
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
-DB_FILE = "seen_ids.db"
+DB_FILE = os.getenv("DB_FILE", "seen_ids.db")
 
 # === Вспомогательные функции ===
 def init_db():
+    """Создаёт БД и таблицу listings при необходимости"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS listings (
             id TEXT PRIMARY KEY,
@@ -54,11 +58,14 @@ def init_db():
     return conn, cursor
 
 
-def was_seen(cursor, obj_id):
+def was_seen(cursor, obj_id: str) -> bool:
+    """Проверяет, есть ли объект с таким id в базе"""
     cursor.execute("SELECT 1 FROM listings WHERE id = ?", (obj_id,))
     return cursor.fetchone() is not None
 
-def mark_as_seen(conn, cursor, obj_id, listing):
+
+def mark_as_seen(conn, cursor, obj_id: str, listing: dict):
+    """Сохраняет объявление в базу"""
     cursor.execute("""
         INSERT OR IGNORE INTO listings (
             id, url, price, price_warm, size, address, lat, lon, swapflat,
@@ -90,7 +97,8 @@ def mark_as_seen(conn, cursor, obj_id, listing):
     conn.commit()
 
 
-def clean_price_size(value):
+def clean_price_size(value: str):
+    """Парсинг цены/площади из строки"""
     if not value:
         return None
     val = value.replace("\xa0", "").replace("€", "").replace("m²", "").strip()
@@ -100,64 +108,54 @@ def clean_price_size(value):
     except ValueError:
         return None
 
-def geocode_address(address):
-    try:
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {"q": address, "format": "json", "limit": 1}
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; ImmoScraper/1.0)"}
-        r = requests.get(url, params=params, headers=headers, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        if data:
-            return float(data[0]["lat"]), float(data[0]["lon"])
-    except Exception:
-        pass
-    return None, None
 
 # === Класс парсера Immowelt ===
 class ImmoweltScraper:
     def __init__(self):
+        """Создаёт сессию и заголовки"""
         self.session = requests.Session()
-        proxy = "http://spagdhmq5r:84aGE67TtiWvrfnql=@de.decodo.com:20000"
-        self.session.proxies = {'http': proxy, 'https': proxy}
+        proxy = os.getenv("IMMO_PROXY")
+        if proxy:
+            self.session.proxies = {"http": proxy, "https": proxy}
+
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "Accept": "application/json",
-            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Language": "de-DE,de;q=0.9",
             "Referer": "https://www.immowelt.de/",
             "Origin": "https://www.immowelt.de"
         }
         self.datadome_cookie = None
 
-    def bypass_datadome(self):
+    def bypass_datadome(self) -> bool:
+        """Пробует обойти защиту DataDome (placeholders вместо секретов)"""
         logging.info("Пытаемся обойти защиту DataDome...")
         url = "https://dd.immowelt.de/js/"
         headers = self.headers.copy()
         headers.update({
-            'content-type': 'application/x-www-form-urlencoded',
-            'referer': 'https://www.immowelt.de/',
+            "content-type": "application/x-www-form-urlencoded",
+            "referer": "https://www.immowelt.de/",
         })
         data = {
-            'jspl': '...',  # ВСТАВЬ СЮДА АКТУАЛЬНОЕ ЗНАЧЕНИЕ jspl
-            'eventCounters': '[]',
-            'jsType': 'ch',
-            'cid': 'l5rXQ1JUmVjC72eu3Ao8...',  # при необходимости замени
-            'ddk': '8C7191D8AA1BF5FBB1B84DC7268196',
-            'Referer': 'https%3A%2F%2Fwww.immowelt.de%2Fclassified-search',
-            'request': '%2Fclassified-search%3FdistributionTypes%3DRent',
-            'responsePage': 'origin',
-            'ddv': '5.1.2',
+            "jspl": os.getenv("DATADOME_JSPL", "CHANGE_ME"),
+            "cid": os.getenv("DATADOME_CID", "CHANGE_ME"),
+            "ddk": os.getenv("DATADOME_DDK", "CHANGE_ME"),
+            "request": "%2Fclassified-search%3FdistributionTypes%3DRent",
+            "responsePage": "origin",
+            "ddv": "5.1.2",
         }
         try:
             response = self.session.post(url, headers=headers, data=data)
-            self.datadome_cookie = response.json()["cookie"].split(';')[0]
-            logging.info("DataDome cookie установлен")
-            return True
+            self.datadome_cookie = response.json().get("cookie", "").split(";")[0]
+            if self.datadome_cookie:
+                logging.info("✅ DataDome cookie установлен")
+                return True
         except Exception as e:
             logging.error(f"❌ Ошибка обхода DataDome: {e}")
-            return False
+        return False
 
     def search_listings(self, page=1, size=30):
+        """Ищет список объявлений"""
         url = "https://www.immowelt.de/serp-bff/search"
         payload = {
             "criteria": {
@@ -179,6 +177,7 @@ class ImmoweltScraper:
         return None
 
     def get_listing_details(self, listing_ids):
+        """Подробности по объявлениям"""
         if not listing_ids:
             return []
         url = f"https://www.immowelt.de/classifiedList/{','.join(listing_ids)}"
@@ -190,6 +189,7 @@ class ImmoweltScraper:
         return r.json() if r.status_code == 200 else []
 
     def parse_and_store_listing(self, listing, conn, cursor):
+        """Парсит объявление и сохраняет в базу"""
         obj_id = listing.get("id")
         if not obj_id or was_seen(cursor, obj_id):
             return
@@ -204,8 +204,6 @@ class ImmoweltScraper:
         coords = listing.get("location", {}).get("coordinates", {})
         lat = coords.get("latitude")
         lon = coords.get("longitude")
-        if not lat or not lon:
-            lat, lon = geocode_address(address)
 
         price = clean_price_size(listing.get("hardFacts", {}).get("price", {}).get("value"))
 
@@ -221,7 +219,6 @@ class ImmoweltScraper:
 
         url = listing.get("url") or f"https://www.immowelt.de/expose/{listing.get('metadata', {}).get('legacyId')}"
 
-        # ✅ Добавляем price_warm: None и обязательные поля
         parsed = {
             "url": url,
             "price": price,
@@ -239,6 +236,7 @@ class ImmoweltScraper:
         logging.info(f"💾 Сохранено объявление: {obj_id}")
 
     def scrape(self, max_pages=1):
+        """Основной процесс скрапинга"""
         if not self.bypass_datadome():
             return
         conn, cursor = init_db()
@@ -256,14 +254,15 @@ class ImmoweltScraper:
             time.sleep(1.5)
         conn.close()
 
+
 # === Запуск напрямую ===
 if __name__ == "__main__":
     scraper = ImmoweltScraper()
     scraper.scrape(max_pages=1)
+
 
 # === Запуск через импорт (в проекте) ===
 def run():
     scraper = ImmoweltScraper()
     scraper.scrape(max_pages=1)
     return True
-
