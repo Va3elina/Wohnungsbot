@@ -87,7 +87,7 @@ bash
 Wohnungsbot/
 │── telegram.py          # основной бот (работа с пользователями)
 │── main.py              # главный цикл: парсинг + рассылка
-│── telegram_admin.py    # админ-бот
+│── bot_admin.py         # админ-бот
 │── telegram_sender.py   # отправка новых объявлений
 │── Immoscout_bd.py      # парсер ImmoScout24
 │── Immowelt.py          # парсер Immowelt
@@ -98,7 +98,4 @@ Wohnungsbot/
 │── .env.template        # пример конфигурации
 │── requirements.txt     # зависимости
 │── README.md            # документация
-⚠️ Важно
-Не публикуйте ваш Telegram Bot Token и секреты в открытом виде (они должны храниться только в .env).
 
-Для Immowelt может потребоваться актуальный datadome cookie. В проекте есть скрипт для его получения через Selenium.
