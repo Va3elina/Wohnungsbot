@@ -6,29 +6,51 @@ from time import sleep
 from bs4 import BeautifulSoup
 import os
 import time
+import logging
+from dotenv import load_dotenv
 
-DB_PATH = "seen_ids.db"
+# === Загрузка .env ===
+load_dotenv()
+
+# === Логирование ===
+LOG_FILE = os.getenv("LOG_FILE", "clean_db.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+
+# === Константы ===
+DB_PATH = os.getenv("DB_FILE", "seen_ids.db")
 BATCH_SIZE = 100
 STATE_FILE_NULL = "last_checked_id_null.txt"
 STATE_FILE_ACTIVE = "last_checked_id_active.txt"
 MODE_STATE_FILE = "mode_state.txt"
 
-CLIENT_ID = "ImmobilienScout24-iPhone-Wohnen-AppKey"
-CLIENT_SECRET = "pMxNytaNhHPujeeK"
+CLIENT_ID = os.getenv("IMMOSCOUT_CLIENT_ID", "ImmobilienScout24-iPhone-Wohnen-AppKey")
+CLIENT_SECRET = os.getenv("IMMOSCOUT_CLIENT_SECRET", "CHANGE_ME")
+
 
 def get_immoscout_token():
+    """Получает OAuth-токен для ImmoScout"""
     token_url = "https://publicauth.immobilienscout24.de/oauth/token"
     params = {
         "client_id": CLIENT_ID,
         "grant_type": "client_credentials",
         "client_secret": CLIENT_SECRET
     }
-    resp = requests.post(token_url, params=params)
+    resp = requests.post(token_url, params=params, timeout=10)
     resp.raise_for_status()
     return resp.json().get("access_token")
 
+
 def immoscout_is_active(data):
+    """Проверяет, активно ли объявление"""
     return data.get("header", {}).get("publicationState", "").lower() == "active"
+
 
 def check_immoscout_listing(obj_id, headers):
     url = f"https://api.mobile.immobilienscout24.de/expose/{obj_id}?adType=RENT"
@@ -38,52 +60,64 @@ def check_immoscout_listing(obj_id, headers):
             return "not_found"
         resp.raise_for_status()
         return "active" if immoscout_is_active(resp.json()) else "inactive"
-    except:
+    except Exception:
         return "error"
 
 
-
 def check_kleinanzeigen_listing(url):
+    """Проверка статуса объявления на Kleinanzeigen"""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
-        print(f"🌍 [clean_db] Проверка Kleinanzeigen: {url}")
+        logging.info(f"[clean_db] Проверка Kleinanzeigen: {url}")
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 404:
             return "deleted"
         soup = BeautifulSoup(resp.text, "html.parser")
-        spans = soup.find_all('span', class_='pvap-reserved-title')
+        spans = soup.find_all("span", class_="pvap-reserved-title")
         for span in spans:
-            if 'is-hidden' in span.get('class', []) or 'display:none' in span.get('style', '').replace(' ', ''):
+            if "is-hidden" in span.get("class", []) or "display:none" in span.get("style", "").replace(" ", ""):
                 continue
             txt = span.get_text(strip=True).lower()
-            if 'reserviert' in txt: return "reserved"
-            if 'gelöscht' in txt: return "deleted"
+            if "reserviert" in txt:
+                return "reserved"
+            if "gelöscht" in txt:
+                return "deleted"
         return "active"
-    except:
+    except Exception:
         return "error"
 
+
 def read_mode():
-    if not os.path.exists(MODE_STATE_FILE): return "null"
-    with open(MODE_STATE_FILE, 'r') as f: return f.read().strip()
+    if not os.path.exists(MODE_STATE_FILE):
+        return "null"
+    with open(MODE_STATE_FILE, "r") as f:
+        return f.read().strip()
+
 
 def save_mode(mode):
-    with open(MODE_STATE_FILE, 'w') as f: f.write(mode)
+    with open(MODE_STATE_FILE, "w") as f:
+        f.write(mode)
+
 
 def get_last_checked_id(mode):
     path = STATE_FILE_NULL if mode == "null" else STATE_FILE_ACTIVE
     try:
         if os.path.exists(path):
-            with open(path, 'r') as f: return f.read().strip()
+            with open(path, "r") as f:
+                return f.read().strip()
     except Exception as e:
-        print(f"⚠️ Не удалось прочитать {path}: {e}")
+        logging.warning(f"⚠️ Не удалось прочитать {path}: {e}")
     return None
+
 
 def save_last_checked_id(last_id, mode):
     path = STATE_FILE_NULL if mode == "null" else STATE_FILE_ACTIVE
     try:
-        with open(path, 'w') as f: f.write(str(last_id))
+        with open(path, "w") as f:
+            f.write(str(last_id))
     except Exception as e:
-        print(f"⚠️ Не удалось сохранить {path}: {e}")
+        logging.warning(f"⚠️ Не удалось сохранить {path}: {e}")
+
 
 def create_tables():
     conn = sqlite3.connect(DB_PATH)
@@ -108,6 +142,7 @@ def create_tables():
     """)
     conn.commit()
     conn.close()
+
 
 def get_next_batch(conn, last_id, is_null_mode):
     cursor = conn.cursor()
@@ -138,6 +173,7 @@ def get_next_batch(conn, last_id, is_null_mode):
         """, (BATCH_SIZE,))
         return cursor.fetchall()
 
+
 def run():
     try:
         MAX_RUNTIME = 100
@@ -164,14 +200,14 @@ def run():
         batch = get_next_batch(conn, last_id, is_null_mode)
 
         if not batch:
-            print("🟡 Нет записей — переключаем режим")
+            logging.info("🟡 Нет записей — переключаем режим")
             save_mode(next_mode)
             conn.close()
             return
 
         for row in batch:
             if time.time() - start_time > MAX_RUNTIME:
-                print("⏱️ Время вышло — завершаем итерацию")
+                logging.info("⏱️ Время вышло — завершаем итерацию")
                 break
 
             checker_type = "kleinanzeigen" if row["source_kleinanzeigen"] else "immoscout" if row["source_immoscout"] else None
@@ -179,10 +215,10 @@ def run():
                 continue
 
             if checker_type == "immoscout":
-                obj_id = int(row['id']) if row['id'].isdigit() else row['id']
+                obj_id = int(row["id"]) if row["id"].isdigit() else row["id"]
                 status = check_immoscout_listing(obj_id, immoscout_headers)
             elif checker_type == "kleinanzeigen":
-                status = check_kleinanzeigen_listing(row['url'])
+                status = check_kleinanzeigen_listing(row["url"])
             else:
                 status = None
 
@@ -191,15 +227,15 @@ def run():
             cursor = conn.cursor()
 
             if is_active == 0:
-                cursor.execute("DELETE FROM listings WHERE id = ?", (row['id'],))
+                cursor.execute("DELETE FROM listings WHERE id = ?", (row["id"],))
             elif is_active == 1:
                 cursor.execute("""
                     UPDATE listings SET is_active = ?, last_checked = ?
                     WHERE id = ?
-                """, (is_active, now, row['id']))
+                """, (is_active, now, row["id"]))
 
             conn.commit()
-            last_id = row['id']
+            last_id = row["id"]
             sleep(1)
 
         save_last_checked_id(last_id, mode)
@@ -207,8 +243,9 @@ def run():
         conn.close()
 
     except Exception as e:
-        print(f"🔥 Ошибка в процессе очистки: {e}")
+        logging.error(f"🔥 Ошибка в процессе очистки: {e}")
+
 
 if __name__ == "__main__":
-    print("🧹 Запуск очистки вручную...")
+    logging.info("🧹 Запуск очистки вручную...")
     run()
