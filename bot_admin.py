@@ -1,15 +1,20 @@
+# -*- coding: utf-8 -*-
 import sqlite3
 import pandas as pd
 import asyncio
-from aiogram import Bot, Dispatcher, Router, types
+import os
+from aiogram import Bot, Dispatcher, Router
 from aiogram.types import Message, BufferedInputFile
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
+from dotenv import load_dotenv
 
-# 🔐 Админ-настройки
-ADMIN_ID = 6013767784
-ADMIN_TOKEN = "8031082256:AAHsQQmk0qvMII1L8BVBvuL37k1svrG-YCk"
+# === Загрузка .env ===
+load_dotenv()
+
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
 # Инициализация бота с поддержкой ParseMode
 bot = Bot(token=ADMIN_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
