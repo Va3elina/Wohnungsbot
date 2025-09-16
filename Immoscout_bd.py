@@ -3,6 +3,13 @@ import time
 import sqlite3
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+CLIENT_ID = os.getenv("IMMOSCOUT_CLIENT_ID")
+CLIENT_SECRET = os.getenv("IMMOSCOUT_CLIENT_SECRET")
 
 DB_FILE = "seen_ids.db"
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
@@ -176,9 +183,9 @@ def is_wbs_required(data):
 def get_token():
     token_url = "https://publicauth.immobilienscout24.de/oauth/token"
     params = {
-        "client_id": "ImmobilienScout24-iPhone-Wohnen-AppKey",
+        "client_id": CLIENT_ID,
         "grant_type": "client_credentials",
-        "client_secret": "pMxNytaNhHPujeeK"
+        "client_secret": CLIENT_SECRET
     }
     response = requests.post(token_url, params=params)
     response.raise_for_status()
